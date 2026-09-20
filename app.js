@@ -71,8 +71,10 @@ const SETTINGS_KEY='pcnavi.settings.v1';
 let sessionId=null,syncing=false,syncNote='';
 const loadRecords=()=>{try{return JSON.parse(localStorage.getItem(STORE_KEY))||[];}catch(e){return [];}};
 const saveRecords=list=>{try{localStorage.setItem(STORE_KEY,JSON.stringify(list));return true;}catch(e){return false;}};
-// 送信先（Googleスプレッドシートの受付窓口）はiPadごとに裏メニューで設定する　プログラムの中には書かない
-const loadSettings=()=>{try{return Object.assign({device:'',url:'',pass:''},JSON.parse(localStorage.getItem(SETTINGS_KEY))||{});}catch(e){return {device:'',url:'',pass:''};}};
+// 送信先（Googleスプレッドシートの受付窓口）は最初から入れておく（2026-09-20 SHO判断：iPadでの入力の手間をなくす）
+// 合言葉はプログラムの中には書かない　iPadごとに裏メニューで入力する　合言葉が合わない送信は受付窓口がすべて断る
+const DEFAULT_URL='https://script.google.com/macros/s/AKfycbxvQYncrVIIjOfNPWv-6807SkNf94cQfMGKRbK21TNwXIl_e6zpe1pzaMcUsZpoZ0Y/exec';
+const loadSettings=()=>{let s={};try{s=JSON.parse(localStorage.getItem(SETTINGS_KEY))||{};}catch(e){}return {device:s.device||'',url:s.url||DEFAULT_URL,pass:s.pass||''};};
 const saveSettings=s=>{try{localStorage.setItem(SETTINGS_KEY,JSON.stringify(s));}catch(e){}};
 function recordSession(consult){
  if(!sessionId)sessionId=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
@@ -90,7 +92,7 @@ function toRow(r){
 }
 async function syncRecords(){
  const s=loadSettings();
- if(!s.url||syncing)return;
+ if(!s.url||!s.pass||syncing)return;
  syncing=true;
  try{
   for(const r of loadRecords().filter(v=>!v.sent)){
@@ -126,8 +128,8 @@ function adminView(){
   const cells=Array.from({length:QUESTION_COUNT},(_,i)=>{const x=r.answers.find(v=>POS[v.q]===i+1);return x?`<td class="${x.a}">${answerLabel(x.q,x.a)}</td>`:'<td>-</td>';}).join('');
   return `<tr><td class="when">${when(r.at)}</td>${cells}<td class="q">${PACKS[r.pack]?PACKS[r.pack].name:'-'}</td><td>${consultLabel(r.consult)}</td></tr>`;
  }).join('');
- return `<section class="admin"><div class="admin-head"><div><span class="tag">スタッフ専用</span><h1>回答の集計</h1><p>このiPadで記録されたお客様 <b>${total}</b> 人　${set.url?`未送信 <b>${unsent}</b> 件`:'送信先が未設定のためこのiPadの中だけに保存しています'}</p></div><div class="admin-actions"><button class="admin-button" data-action="admin-csv" ${total?'':'disabled'}>CSVで書き出す</button><button class="admin-button danger" data-action="admin-clear" ${total?'':'disabled'}>記録をすべて消す</button><button class="admin-button primary" data-action="admin-close">お客様の画面に戻る</button></div></div>
- <h2>このiPadの設定</h2><div class="admin-settings"><label>iPadの名前<input id="set-device" value="${esc(set.device)}" placeholder="例 iPad 1号機"></label><label>送信先URL（受付窓口）<input id="set-url" value="${esc(set.url)}" placeholder="https://script.google.com/macros/s/…/exec" inputmode="url" autocapitalize="off" autocorrect="off"></label><label>合言葉<span class="pass-row"><input id="set-pass" type="password" value="${esc(set.pass)}" autocomplete="off" autocapitalize="off" autocorrect="off"><button type="button" class="admin-button small" data-action="admin-peek">見る</button></span></label><div class="admin-actions"><button class="admin-button primary" data-action="admin-save">設定を保存</button><button class="admin-button" data-action="admin-sync" ${set.url&&unsent?'':'disabled'}>未送信を今すぐ送る</button></div><p class="admin-note">${syncNote || 'すべてのiPadの集計はGoogleスプレッドシートに集まります　この画面の集計はこのiPadの分だけです'}</p></div>
+ return `<section class="admin"><div class="admin-head"><div><span class="tag">スタッフ専用</span><h1>回答の集計</h1><p>このiPadで記録されたお客様 <b>${total}</b> 人　${set.pass?`未送信 <b>${unsent}</b> 件`:'合言葉が未設定のためこのiPadの中だけに保存しています'}</p></div><div class="admin-actions"><button class="admin-button" data-action="admin-csv" ${total?'':'disabled'}>CSVで書き出す</button><button class="admin-button danger" data-action="admin-clear" ${total?'':'disabled'}>記録をすべて消す</button><button class="admin-button primary" data-action="admin-close">お客様の画面に戻る</button></div></div>
+ <h2>このiPadの設定</h2><div class="admin-settings"><label>iPadの名前<input id="set-device" value="${esc(set.device)}" placeholder="例 iPad 1号機"></label><label>送信先URL（入力済み・そのままでOK）<input id="set-url" value="${esc(set.url)}" placeholder="https://script.google.com/macros/s/…/exec" inputmode="url" autocapitalize="off" autocorrect="off"></label><label>合言葉<span class="pass-row"><input id="set-pass" type="password" value="${esc(set.pass)}" autocomplete="off" autocapitalize="off" autocorrect="off"><button type="button" class="admin-button small" data-action="admin-peek">見る</button></span></label><div class="admin-actions"><button class="admin-button primary" data-action="admin-save">設定を保存</button><button class="admin-button" data-action="admin-sync" ${set.pass&&unsent?'':'disabled'}>未送信を今すぐ送る</button></div><p class="admin-note">${syncNote || 'すべてのiPadの集計はGoogleスプレッドシートに集まります　この画面の集計はこのiPadの分だけです'}</p></div>
  <h2>質問ごとの集計（このiPadの分）</h2><div class="admin-scroll"><table class="admin-table"><thead><tr><th>問</th><th>質問</th><th>回答数</th><th>はい</th><th>いいえ</th><th>はいの割合</th></tr></thead><tbody>${rows}</tbody></table></div>
  <div class="admin-two"><div><h2>おすすめしたパック</h2><table class="admin-table"><tbody>${packs}</tbody></table></div><div><h2>最後の選択</h2><table class="admin-table"><tbody>${consults}</tbody></table></div></div>
  <h2>お客様ごとの回答（新しい順）</h2><div class="admin-scroll"><table class="admin-table people"><thead><tr><th>日時</th>${Array.from({length:QUESTION_COUNT},(_,i)=>`<th>${i+1}</th>`).join('')}<th>おすすめパック</th><th>最後の選択</th></tr></thead><tbody>${people || `<tr><td colspan="${QUESTION_COUNT+3}">まだ記録がありません</td></tr>`}</tbody></table></div></section>`;
