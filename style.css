@@ -123,3 +123,14 @@
 /* ホーム画面から開いたとき（全画面）のすき間 */
 @media(display-mode:standalone){body{padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}}
 .pass-row{display:flex;gap:6px}.pass-row input{flex:1}.admin-button.small{padding:8px 12px;font-size:13px;white-space:nowrap}
+
+/* スタッフ記入欄（成約・未成約） */
+.staff-box{margin:22px 0 6px;padding:16px 18px;border:2px dashed #9fb1dc;border-radius:16px;background:rgba(255,255,255,.92)}
+.staff-tag{display:inline-block;padding:3px 12px;border-radius:999px;background:#465774;color:#fff;font-size:13px;font-weight:700}
+.staff-box p{margin:8px 0 12px;font-size:15px;color:#465774}
+.staff-buttons{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.staff-button{padding:14px 10px;border-radius:12px;border:2px solid #9fb1dc;background:#fff;color:#142449;font-size:16px;font-weight:700;cursor:pointer;touch-action:manipulation}
+.staff-button.is-on{background:var(--blue);border-color:var(--blue);color:#fff}
+.staff-button[data-value="lost"].is-on{background:#b51e2b;border-color:#b51e2b}
+.admin-outcome{padding:6px 8px;border:1px solid #c8d3e7;border-radius:8px;font-size:13px;background:#fff}
+@media(max-width:600px){.staff-buttons{grid-template-columns:1fr}}

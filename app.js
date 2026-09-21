@@ -79,16 +79,27 @@ const saveSettings=s=>{try{localStorage.setItem(SETTINGS_KEY,JSON.stringify(s));
 function recordSession(consult){
  if(!sessionId)sessionId=Date.now().toString(36)+Math.random().toString(36).slice(2,6);
  const list=loadRecords(),i=list.findIndex(r=>r.id===sessionId);
- const rec={id:sessionId,at:i>=0?list[i].at:new Date().toISOString(),device:loadSettings().device,answers:history.map(h=>({q:h.id,a:h.answer})),pack:packKey(),consult:consult || (i>=0?list[i].consult:null),sent:false};
+ const rec={id:sessionId,at:i>=0?list[i].at:new Date().toISOString(),device:loadSettings().device,answers:history.map(h=>({q:h.id,a:h.answer})),pack:packKey(),consult:consult || (i>=0?list[i].consult:null),outcome:i>=0?(list[i].outcome||null):null,sent:false};
  if(i>=0)list[i]=rec;else list.push(rec);
  saveRecords(list);
  syncRecords();
 }
+// 成約の結果（スタッフが記録する）　値は visit / backup / standard（そのパックで成約）・lost（未成約）・null（未記入）
+function setOutcome(id,value){
+ const list=loadRecords(),i=list.findIndex(r=>r.id===id);
+ if(i<0)return;
+ list[i].outcome=value || null;
+ list[i].sent=false;
+ saveRecords(list);
+ syncRecords();
+}
+const outcomeLabel=v=>v==='lost'?'未成約':PACKS[v]?'成約':'未記入';
+const outcomePack=v=>PACKS[v]?PACKS[v].name:'';
 // 未送信の記録を1件ずつ受付窓口へ送る　同じお客様の記録は上書きされる　電波がないときは次の機会に送る
 function toRow(r){
  const cells=Array.from({length:QUESTION_COUNT},(_,i)=>{const x=r.answers.find(v=>POS[v.q]===i+1);return x?answerLabel(x.q,x.a):'';});
  const q3=r.answers.find(v=>POS[v.q]===3);
- return {id:r.id,at:when(r.at),device:r.device || loadSettings().device,answers:cells,q3:q3?Q3_TAG[q3.q]:'',pack:PACKS[r.pack]?PACKS[r.pack].name:'',consult:consultLabel(r.consult)};
+ return {id:r.id,at:when(r.at),device:r.device || loadSettings().device,answers:cells,q3:q3?Q3_TAG[q3.q]:'',pack:PACKS[r.pack]?PACKS[r.pack].name:'',consult:consultLabel(r.consult),outcome:outcomeLabel(r.outcome),outcomePack:outcomePack(r.outcome)};
 }
 async function syncRecords(){
  const s=loadSettings();
@@ -101,7 +112,7 @@ async function syncRecords(){
    if(!out.ok)throw new Error(out.error || '受付窓口がエラーを返しました');
    const list=loadRecords(),i=list.findIndex(v=>v.id===r.id);
    // 送信中にお客様が最後の選択を変えた場合は未送信のままにして次に送り直す
-   if(i>=0&&JSON.stringify(list[i].answers)===JSON.stringify(r.answers)&&list[i].consult===r.consult){list[i].sent=true;saveRecords(list);}
+   if(i>=0&&JSON.stringify(list[i].answers)===JSON.stringify(r.answers)&&list[i].consult===r.consult&&(list[i].outcome||null)===(r.outcome||null)){list[i].sent=true;saveRecords(list);}
   }
   syncNote='送信できました（'+when(new Date().toISOString())+'）';
  }catch(e){syncNote='送信できませんでした：'+e.message;}
@@ -124,22 +135,26 @@ function adminView(){
  }).join('');
  const packs=PACK_ORDER.map(k=>{const n=list.filter(r=>r.pack===k).length;return `<tr><td class="q">${PACKS[k].name}</td><td class="num">${n}<small>${pct(n,total)}%</small></td></tr>`;}).join('');
  const consults=['yes','no',null].map(c=>{const n=list.filter(r=>(r.consult||null)===c).length;return `<tr><td class="q">${consultLabel(c)}</td><td class="num">${n}<small>${pct(n,total)}%</small></td></tr>`;}).join('');
+ const won=list.filter(r=>PACKS[r.outcome]).length,lost=list.filter(r=>r.outcome==='lost').length,blank=total-won-lost;
+ const outcomes=[['成約',won],['未成約',lost],['未記入',blank]].map(v=>`<tr><td class="q">${v[0]}</td><td class="num">${v[1]}<small>${pct(v[1],total)}%</small></td></tr>`).join('')+`<tr><td class="q"><b>成約率</b>（成約 ÷ 成約と未成約の合計）</td><td class="num">${won+lost?pct(won,won+lost)+'%':'-'}</td></tr>`;
+ const wonPacks=PACK_ORDER.map(k=>{const n=list.filter(r=>r.outcome===k).length;return `<tr><td class="q">${PACKS[k].name}</td><td class="num">${n}<small>${pct(n,won)}%</small></td></tr>`;}).join('');
  const people=list.slice().reverse().slice(0,300).map(r=>{
   const cells=Array.from({length:QUESTION_COUNT},(_,i)=>{const x=r.answers.find(v=>POS[v.q]===i+1);return x?`<td class="${x.a}">${answerLabel(x.q,x.a)}</td>`:'<td>-</td>';}).join('');
-  return `<tr><td class="when">${when(r.at)}</td>${cells}<td class="q">${PACKS[r.pack]?PACKS[r.pack].name:'-'}</td><td>${consultLabel(r.consult)}</td></tr>`;
+  return `<tr><td class="when">${when(r.at)}</td>${cells}<td class="q">${PACKS[r.pack]?PACKS[r.pack].name:'-'}</td><td>${consultLabel(r.consult)}</td><td><select class="admin-outcome" data-id="${r.id}"><option value="">未記入</option>${PACK_ORDER.map(k=>`<option value="${k}" ${r.outcome===k?'selected':''}>成約 ${PACKS[k].name}</option>`).join('')}<option value="lost" ${r.outcome==='lost'?'selected':''}>未成約</option></select></td></tr>`;
  }).join('');
  return `<section class="admin"><div class="admin-head"><div><span class="tag">スタッフ専用</span><h1>回答の集計</h1><p>このiPadで記録されたお客様 <b>${total}</b> 人　${set.pass?`未送信 <b>${unsent}</b> 件`:'合言葉が未設定のためこのiPadの中だけに保存しています'}</p></div><div class="admin-actions"><button class="admin-button" data-action="admin-csv" ${total?'':'disabled'}>CSVで書き出す</button><button class="admin-button danger" data-action="admin-clear" ${total?'':'disabled'}>記録をすべて消す</button><button class="admin-button primary" data-action="admin-close">お客様の画面に戻る</button></div></div>
  <h2>このiPadの設定</h2><div class="admin-settings"><label>iPadの名前<input id="set-device" value="${esc(set.device)}" placeholder="例 iPad 1号機"></label><label>送信先URL（入力済み・そのままでOK）<input id="set-url" value="${esc(set.url)}" placeholder="https://script.google.com/macros/s/…/exec" inputmode="url" autocapitalize="off" autocorrect="off"></label><label>合言葉<span class="pass-row"><input id="set-pass" type="password" value="${esc(set.pass)}" autocomplete="off" autocapitalize="off" autocorrect="off"><button type="button" class="admin-button small" data-action="admin-peek">見る</button></span></label><div class="admin-actions"><button class="admin-button primary" data-action="admin-save">設定を保存</button><button class="admin-button" data-action="admin-sync" ${set.pass&&unsent?'':'disabled'}>未送信を今すぐ送る</button></div><p class="admin-note">${syncNote || 'すべてのiPadの集計はGoogleスプレッドシートに集まります　この画面の集計はこのiPadの分だけです'}</p></div>
+ <div class="admin-two"><div><h2>成約の結果</h2><table class="admin-table"><tbody>${outcomes}</tbody></table></div><div><h2>成約したパック</h2><table class="admin-table"><tbody>${wonPacks}</tbody></table></div></div>
  <h2>質問ごとの集計（このiPadの分）</h2><div class="admin-scroll"><table class="admin-table"><thead><tr><th>問</th><th>質問</th><th>回答数</th><th>はい</th><th>いいえ</th><th>はいの割合</th></tr></thead><tbody>${rows}</tbody></table></div>
  <div class="admin-two"><div><h2>おすすめしたパック</h2><table class="admin-table"><tbody>${packs}</tbody></table></div><div><h2>最後の選択</h2><table class="admin-table"><tbody>${consults}</tbody></table></div></div>
- <h2>お客様ごとの回答（新しい順）</h2><div class="admin-scroll"><table class="admin-table people"><thead><tr><th>日時</th>${Array.from({length:QUESTION_COUNT},(_,i)=>`<th>${i+1}</th>`).join('')}<th>おすすめパック</th><th>最後の選択</th></tr></thead><tbody>${people || `<tr><td colspan="${QUESTION_COUNT+3}">まだ記録がありません</td></tr>`}</tbody></table></div></section>`;
+ <h2>お客様ごとの回答（新しい順）</h2><div class="admin-scroll"><table class="admin-table people"><thead><tr><th>日時</th>${Array.from({length:QUESTION_COUNT},(_,i)=>`<th>${i+1}</th>`).join('')}<th>おすすめパック</th><th>最後の選択</th><th>成約の結果（ここで記録・修正できます）</th></tr></thead><tbody>${people || `<tr><td colspan="${QUESTION_COUNT+4}">まだ記録がありません</td></tr>`}</tbody></table></div></section>`;
 }
 function exportCsv(){
- const head=['日時',...Array.from({length:QUESTION_COUNT},(_,i)=>(i+1)+'問目'),'3問目の種類','おすすめパック','最後の選択'];
+ const head=['日時',...Array.from({length:QUESTION_COUNT},(_,i)=>(i+1)+'問目'),'3問目の種類','おすすめパック','最後の選択','成約','成約したパック'];
  const lines=loadRecords().map(r=>{
   const cells=Array.from({length:QUESTION_COUNT},(_,i)=>{const x=r.answers.find(v=>POS[v.q]===i+1);return x?answerLabel(x.q,x.a):'';});
   const q3=r.answers.find(v=>POS[v.q]===3);
-  return [when(r.at),...cells,q3?Q3_TAG[q3.q]:'',PACKS[r.pack]?PACKS[r.pack].name:'',consultLabel(r.consult)];
+  return [when(r.at),...cells,q3?Q3_TAG[q3.q]:'',PACKS[r.pack]?PACKS[r.pack].name:'',consultLabel(r.consult),outcomeLabel(r.outcome),outcomePack(r.outcome)];
  });
  const csv='\ufeff'+[head,...lines].map(row=>row.map(c=>'"'+String(c).replace(/"/g,'""')+'"').join(',')).join('\r\n');
  const d=new Date(),p=n=>String(n).padStart(2,'0'),name='pc-navi-'+d.getFullYear()+p(d.getMonth()+1)+p(d.getDate())+'.csv';
@@ -155,6 +170,13 @@ const cross='<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-w
 function aside(stage){return `<aside class="sidebar"><div class="eyebrow">PC SUPPORT GUIDE</div><h2>新しい一台を<br>安心して<br>使い始める　</h2><div class="steps">${['質問に答える','提案を見る','相談につなぐ'].map((t,i)=>`<div class="step ${stage===i?'current':stage>i?'complete':''}" ${stage===i?'aria-current="step"':''}><span class="step-index">${stage>i?'✓':i+1}</span><span>${t}</span></div>`).join('')}</div><div class="side-bottom"><strong class="reassurance"><span>難しく考えなくて</span><span>大丈夫</span></strong><br>今の気持ちに近い方を<br>選んでください　</div></aside>`;}
 function choice(answer,label,sub){return `<button class="choice ${answer==='no'?'no':''}" data-answer="${answer}"><span class="choice-label">${answer==='yes'?tick:cross}${label}</span><small>${sub}</small></button>`;}
 function packCards(key){return `<div class="pack-cards">${PACK_ORDER.map(k=>`<div class="pack-card ${k===key?'is-recommended':''}">${k===key?'<span class="pack-flag">あなたへのおすすめ</span>':''}<span class="pack-badge">${PACKS[k].badge}</span><h3>${phr(PACKS[k].parts)}</h3><p>${PACKS[k].desc}</p></div>`).join('')}</div>`;}
+function staffBox(){
+ const rec=loadRecords().find(r=>r.id===sessionId);
+ if(!rec)return '';
+ const cur=rec.outcome || '';
+ const btn=(v,label)=>`<button class="staff-button ${cur===v?'is-on':''}" data-action="outcome" data-value="${v}">${label}</button>`;
+ return `<div class="staff-box"><span class="staff-tag">スタッフ記入欄</span><p>${cur?'記録しました　押し直すと変更できます':'ご案内の結果を押してください'}</p><div class="staff-buttons">${PACK_ORDER.map(k=>btn(k,'成約　'+PACKS[k].name)).join('')}${btn('lost','未成約')}</div></div>`;
+}
 function render(focus=true){
  let html,stage=0;
  if(screen==='admin'){main.innerHTML=`<div class="stage admin-stage">${adminView()}</div>`;window.scrollTo({top:0,behavior:'instant'});return;}
@@ -166,7 +188,7 @@ function render(focus=true){
   html=`<section class="content result fade-in"><div class="topline"><span class="tag">${QUESTION_COUNT}問のご回答から</span><span class="count">あなたへのご提案</span></div><h1 class="support-catchphrase">${phr(r.pack.headline)}</h1>${packCards(r.key)}<div class="recommendation is-pack"><span class="eyebrow">ご回答から見えたこと</span><ul>${r.reasons.map(t=>`<li>${t}</li>`).join('')}</ul></div><p class="micro">パックの内容と料金は担当者がご案内します　以前のパソコンからのデータ移行もあわせてご相談いただけます</p><p class="prompt">この内容で担当者に相談しますか？</p><div class="choices">${choice('yes','はい相談したい','相談内容を確認する')}${choice('no','いいえいったん保留','今回の回答を確認する')}</div><div class="navrow"><button class="text-button" data-action="back">← 回答を見直す</button><button class="text-button" data-action="restart">最初からやり直す</button></div></section>`;
  }else{
   stage=2;const r=recommendation(),interested=screen==='handoff';
-  html=`<section class="content handoff fade-in"><span class="tag">${interested?'相談内容の確認':'今回の回答まとめ'}</span><h1>${interested?'この画面を担当者にお見せください　':'必要になったときにご相談ください　'}</h1><p class="helper">${interested?'ご希望を伺いパックの内容と料金をご案内するための確認画面です　':'今回の回答から次のパックをご提案しました　今すぐ決めなくても大丈夫です　'}</p><div class="recommendation is-pack"><span class="eyebrow">${interested?'相談したいパック':'今回のご提案'}</span><span class="pack-badge">${r.pack.badge}</span><h2>${r.name}</h2></div><ul class="answer-list">${history.map(h=>`<li><span>${titleText(QUESTIONS[h.id])}</span><b>${h.id==='start'?(h.answer==='yes'?'ご自身で選択':'スタッフのおすすめ'):(h.answer==='yes'?'はい':'いいえ')}</b></li>`).join('')}</ul><p class="micro">この試作では申込送信・予約は行われません　受付先は未設定です　</p><div class="navrow"><button class="text-button" data-action="result">← ご提案に戻る</button><button class="text-button" data-action="restart">最初の質問へ</button></div></section>`;
+  html=`<section class="content handoff fade-in"><span class="tag">${interested?'相談内容の確認':'今回の回答まとめ'}</span><h1>${interested?'この画面を担当者にお見せください　':'必要になったときにご相談ください　'}</h1><p class="helper">${interested?'ご希望を伺いパックの内容と料金をご案内するための確認画面です　':'今回の回答から次のパックをご提案しました　今すぐ決めなくても大丈夫です　'}</p><div class="recommendation is-pack"><span class="eyebrow">${interested?'相談したいパック':'今回のご提案'}</span><span class="pack-badge">${r.pack.badge}</span><h2>${r.name}</h2></div>${staffBox()}<ul class="answer-list">${history.map(h=>`<li><span>${titleText(QUESTIONS[h.id])}</span><b>${h.id==='start'?(h.answer==='yes'?'ご自身で選択':'スタッフのおすすめ'):(h.answer==='yes'?'はい':'いいえ')}</b></li>`).join('')}</ul><p class="micro">この試作では申込送信・予約は行われません　受付先は未設定です　</p><div class="navrow"><button class="text-button" data-action="result">← ご提案に戻る</button><button class="text-button" data-action="restart">最初の質問へ</button></div></section>`;
  }
  const photo=screen==='start'?'new-laptop':['selfSetup','aiSetup','account','office','bitlocker','bitlockerKey','recovery'].includes(screen)?'laptop-setup':'support-consultation';
  main.innerHTML=`<div class="stage photo-${photo}">${aside(stage)}${html}</div>`;
@@ -181,6 +203,7 @@ main.addEventListener('click',e=>{
  }else if(b.dataset.action==='back'){const prev=history.pop();if(prev)screen=prev.id;}
  else if(b.dataset.action==='restart'){history=[];screen='start';sessionId=null;}
  else if(b.dataset.action==='admin-close'){history=[];screen='start';sessionId=null;}
+ else if(b.dataset.action==='outcome'){const rec=loadRecords().find(r=>r.id===sessionId);const v=b.dataset.value;setOutcome(sessionId,rec&&rec.outcome===v?null:v);const y=window.scrollY;render(false);window.scrollTo({top:y,behavior:'instant'});return;}
  else if(b.dataset.action==='admin-csv'){exportCsv();return;}
  else if(b.dataset.action==='admin-peek'){const i=document.getElementById('set-pass');i.type=i.type==='password'?'text':'password';b.textContent=i.type==='password'?'見る':'隠す';return;}
  else if(b.dataset.action==='admin-save'){const v=id=>document.getElementById(id).value.trim();saveSettings({device:v('set-device'),url:v('set-url'),pass:v('set-pass')});syncNote='設定を保存しました';syncRecords();}
@@ -189,6 +212,7 @@ main.addEventListener('click',e=>{
  else if(b.dataset.action==='result')screen='result';
  render();
 });
+main.addEventListener('change',e=>{const s=e.target.closest('select.admin-outcome');if(!s)return;setOutcome(s.dataset.id,s.value);const y=window.scrollY;render(false);window.scrollTo({top:y,behavior:'instant'});});
 for(const file of ['new-laptop','laptop-setup','support-consultation']){const img=new Image();img.src='photos/'+file+'.png';}
 document.querySelector('.brand').addEventListener('click',e=>{e.preventDefault();history=[];screen='start';sessionId=null;render();});
 // 裏メニュー：右上の「約3分・全10問」を3秒以内に5回タップ
